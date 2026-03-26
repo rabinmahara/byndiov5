@@ -5,7 +5,8 @@ async function verifyAdmin(event) {
   const authHeader = event.headers['authorization'] || event.headers['Authorization'] || '';
   const token = authHeader.replace('Bearer ', '');
   if (!token) return null;
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  // Use SUPABASE_URL (no VITE_ prefix) — VITE_ vars are build-time only and not available in Netlify functions
+  const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceKey) return null;
   const supabase = createClient(supabaseUrl, serviceKey);

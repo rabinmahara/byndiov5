@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase } from './lib/supabase';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { PRODUCTS as LOCAL_PRODUCTS } from './data';
 
 // All shared interfaces live in types.ts to avoid circular dependency:
@@ -99,6 +99,12 @@ export const useAppStore = create<AppState>()(
       rewardPoints: 0,
 
       initAuth: () => {
+        // Skip all Supabase calls if env vars are not configured
+        if (!isSupabaseConfigured()) {
+          set({ isAuthLoading: false });
+          return;
+        }
+
         const buildUser = (sessionUser: any, profileData: any): User => {
           // Check subscription expiry — downgrade to 'free' if expired
           let activePlan = (profileData?.subscription_plan as User['subscription_plan']) || 'free';
@@ -118,44 +124,52 @@ export const useAppStore = create<AppState>()(
           };
         };
 
-        // Only register the auth state listener once
-        if (!(window as any).__byndioAuthListenerRegistered) {
-          (window as any).__byndioAuthListenerRegistered = true;
-          supabase.auth.onAuthStateChange((_event, session) => {
-            if (session?.user) {
-              // Use maybeSingle() — won't 406 if row doesn't exist yet
-              supabase.from('users').select('*').eq('id', session.user.id).maybeSingle()
-                .then(({ data }) => {
-                  // Always log user in from session, even if profile row is missing
-                  const builtUser = buildUser(session.user, data);
-                  set({ user: builtUser, isAuthLoading: false });
-                  // Sync wishlist from DB
-                  supabase.from('wishlists').select('product_id').eq('user_id', session.user.id)
-                    .then(({ data: wl }) => {
-                      if (wl && wl.length > 0) {
-                        const dbWishlist = wl.map(w => w.product_id);
-                        const localWishlist = get().wishlist;
-                        const merged = Array.from(new Set([...localWishlist.map(String), ...dbWishlist]));
-                        set({ wishlist: merged });
-                        // Upload any local items not yet in DB
-                        const toUpload = localWishlist.filter(id => !dbWishlist.includes(String(id)));
-                        if (toUpload.length > 0) {
-                          supabase.from('wishlists').upsert(
-                            toUpload.map(id => ({ user_id: session.user.id, product_id: String(id) })),
-                            { onConflict: 'user_id,product_id' }
-                          ).then(() => {});
-                        }
+        // Register auth state listener and store the unsubscribe handle.
+        // Using the returned subscription (instead of a window flag) is the
+        // correct pattern for React 18 StrictMode — the effect runs twice in
+        // dev, so the second call gets its own subscription that is cleaned up
+        // on unmount, avoiding double-listener accumulation in production.
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+          if (session?.user) {
+            // Use maybeSingle() — won't 406 if row doesn't exist yet
+            supabase.from('users').select('*').eq('id', session.user.id).maybeSingle()
+              .then(({ data }) => {
+                // Always log user in from session, even if profile row is missing
+                const builtUser = buildUser(session.user, data);
+                set({ user: builtUser, isAuthLoading: false });
+                // Sync wishlist from DB
+                supabase.from('wishlists').select('product_id').eq('user_id', session.user.id)
+                  .then(({ data: wl }) => {
+                    if (wl && wl.length > 0) {
+                      const dbWishlist = wl.map((w: any) => w.product_id);
+                      const localWishlist = get().wishlist;
+                      const merged = Array.from(new Set([...localWishlist.map(String), ...dbWishlist]));
+                      set({ wishlist: merged });
+                      // Upload any local items not yet in DB
+                      const toUpload = localWishlist.filter(id => !dbWishlist.includes(String(id)));
+                      if (toUpload.length > 0) {
+                        supabase.from('wishlists').upsert(
+                          toUpload.map(id => ({ user_id: session.user.id, product_id: String(id) })),
+                          { onConflict: 'user_id,product_id' }
+                        ).then(() => {});
                       }
-                    }).catch((err) => { console.error('[store]', err); });
-                })
-                .catch(() => {
-                  set({ user: buildUser(session.user, null), isAuthLoading: false });
-                });
-            } else {
-              set({ user: null, isAuthLoading: false });
-            }
-          });
+                    }
+                  }).catch((err) => { console.error('[store]', err); });
+              })
+              .catch(() => {
+                set({ user: buildUser(session.user, null), isAuthLoading: false });
+              });
+          } else {
+            set({ user: null, isAuthLoading: false });
+          }
+        });
+
+        // Store unsubscribe on window so StrictMode's second effect call can
+        // clean up the first subscription before registering a new one.
+        if ((window as any).__byndioAuthUnsub) {
+          (window as any).__byndioAuthUnsub();
         }
+        (window as any).__byndioAuthUnsub = () => subscription.unsubscribe();
 
         // Always check current session on init
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -174,6 +188,7 @@ export const useAppStore = create<AppState>()(
       },
 
       fetchSiteSettings: async () => {
+        if (!isSupabaseConfigured()) return;
         try {
           const { data, error } = await supabase.from('site_settings').select('*').eq('id', 1).single();
           if (!error && data) set({ siteSettings: data });
@@ -181,6 +196,7 @@ export const useAppStore = create<AppState>()(
       },
 
       fetchProducts: async () => {
+        if (!isSupabaseConfigured()) return;
         set({ isLoadingProducts: true });
         try {
           const { data, error } = await supabase.from('products').select('*').eq('is_active', true);
@@ -203,7 +219,7 @@ export const useAppStore = create<AppState>()(
 
       fetchMyOrders: async () => {
         const { user } = get();
-        if (!user) return;
+        if (!user || !isSupabaseConfigured()) return;
         set({ isLoadingOrders: true });
         try {
           const { data } = await supabase.from('orders').select(`id,buyer_id,total_amount,status,payment_status,shipping_address,payment_method,created_at,order_items(id,quantity,price,products(name,images))`).eq('buyer_id', user.id).order('created_at', { ascending: false });
@@ -214,7 +230,7 @@ export const useAppStore = create<AppState>()(
 
       fetchAffiliateLinks: async () => {
         const { user } = get();
-        if (!user) return;
+        if (!user || !isSupabaseConfigured()) return;
         try {
           const { data } = await supabase.from('affiliate_links').select('*, products(name, images, price)').eq('user_id', user.id).order('created_at', { ascending: false });
           if (data) set({ affiliateLinks: data.map(l => ({ ...l, product: l.products ? { name: l.products.name, icon: l.products.images?.[0] || '📦', price: l.products.price } : undefined })) });
@@ -222,6 +238,7 @@ export const useAppStore = create<AppState>()(
       },
 
       fetchFlashSales: async () => {
+        if (!isSupabaseConfigured()) return;
         try {
           const now = new Date().toISOString();
           const { data } = await supabase.from('flash_sales').select('*, products(name,images)').eq('is_active', true).gte('ends_at', now).order('ends_at');
@@ -231,7 +248,7 @@ export const useAppStore = create<AppState>()(
 
       fetchWalletData: async () => {
         const { user } = get();
-        if (!user) return;
+        if (!user || !isSupabaseConfigured()) return;
         try {
           const { data: wallet } = await supabase.from('wallets').select('balance').eq('user_id', user.id).single();
           const { data: points } = await supabase.from('reward_points').select('points').eq('user_id', user.id);

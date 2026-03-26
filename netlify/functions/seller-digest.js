@@ -10,10 +10,11 @@ exports.handler = async (event) => {
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
   const FROM_EMAIL     = process.env.FROM_EMAIL || 'noreply@byndio.in';
   const SUPABASE_URL   = process.env.SUPABASE_URL;
-  const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY;
+  // Must use service role key — anon key is blocked by RLS on the users table
+  const SUPABASE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!RESEND_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
-    console.warn('[seller-digest] Missing env vars — skipping');
+    console.warn('[seller-digest] Missing env vars (RESEND_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) — skipping');
     return { statusCode: 200, body: 'Skipped — missing config' };
   }
 
