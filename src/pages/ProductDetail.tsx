@@ -27,7 +27,7 @@ export default function ProductDetail() {
     user,
     addRecentlyViewed,
     generateAffiliateLink,
-    recentlyViewed, // ✅ FIX
+    recentlyViewed,
   } = useAppStore();
 
   const product = useMemo(
@@ -42,17 +42,14 @@ export default function ProductDetail() {
   const [qty, setQty] = useState(1);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [isLoadingReviews, setIsLoadingReviews] = useState(false);
-  const [addedToCart, setAddedToCart] = useState(false);
   const [qaList, setQaList] = useState<any[]>([]);
+  const [addedToCart, setAddedToCart] = useState(false);
   const [myAffiliateCode, setMyAffiliateCode] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // ✅ Memoized (performance boost)
   const similarProducts = useMemo(() => {
     if (!product) return [];
-    return products
-      .filter(p => p.cat === product.cat && p.id !== product.id)
-      .slice(0, 5);
+    return products.filter(p => p.cat === product.cat && p.id !== product.id).slice(0, 5);
   }, [products, product]);
 
   const recentProducts = useMemo(() => {
@@ -65,8 +62,6 @@ export default function ProductDetail() {
 
   useEffect(() => {
     window.scrollTo(0, 0);
-    setQty(1);
-    setAddedToCart(false);
     if (id) addRecentlyViewed(id);
     fetchReviews();
     fetchQA();
@@ -92,7 +87,8 @@ export default function ProductDetail() {
       const { data } = await supabase
         .from('product_qa')
         .select('*')
-        .eq('product_id', id);
+        .eq('product_id', id)
+        .order('created_at', { ascending: false });
       if (data) setQaList(data);
     } catch {}
   };
@@ -117,11 +113,7 @@ export default function ProductDetail() {
   };
 
   if (!product) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        Product not found
-      </div>
-    );
+    return <div className="p-6 text-center">Product not found</div>;
   }
 
   const isWishlisted = wishlist.includes(product.id);
@@ -132,14 +124,12 @@ export default function ProductDetail() {
       {/* PRODUCT */}
       <div className="bg-white p-5 rounded-xl mb-6">
         <h1 className="text-xl font-bold mb-2">{product.name}</h1>
-        <p className="text-lg font-black mb-2">₹{product.price}</p>
+        <p className="text-lg font-black mb-2">₹{product.price.toLocaleString('en-IN')}</p>
 
         <div className="flex gap-2">
           <button
             onClick={handleAdd}
-            className={`px-4 py-2 text-white rounded ${
-              addedToCart ? 'bg-green-600' : 'bg-blue-600'
-            }`}
+            className={`px-4 py-2 text-white rounded ${addedToCart ? 'bg-green-600' : 'bg-blue-600'}`}
           >
             {addedToCart ? '✓ Added' : 'Add to Cart'}
           </button>
@@ -153,7 +143,7 @@ export default function ProductDetail() {
         </div>
       </div>
 
-      {/* SIMILAR */}
+      {/* SIMILAR PRODUCTS */}
       {similarProducts.length > 0 && (
         <section className="mb-6">
           <h2 className="font-bold mb-3">You Might Also Like</h2>
@@ -165,7 +155,7 @@ export default function ProductDetail() {
         </section>
       )}
 
-      {/* RECENT */}
+      {/* RECENTLY VIEWED */}
       {recentProducts.length > 0 && (
         <section className="mb-6">
           <h2 className="font-bold mb-3">Recently Viewed</h2>
@@ -203,6 +193,33 @@ export default function ProductDetail() {
         )}
       </section>
 
+      {/* Q&A */}
+      <section className="bg-white p-5 rounded-xl mb-6">
+        <h2 className="font-bold mb-3">Questions & Answers ({qaList.length})</h2>
+
+        {qaList.length === 0 ? (
+          <p>No questions yet</p>
+        ) : (
+          qaList.map(item => (
+            <div key={item.id} className="mb-4">
+
+              <div className="flex gap-2">
+                <span className="font-bold text-blue-600">Q:</span>
+                <span>{item.question}</span>
+              </div>
+
+              {item.answer && (
+                <div className="flex gap-2 ml-4 text-green-700">
+                  <span className="font-bold">A:</span>
+                  <span>{item.answer}</span>
+                </div>
+              )}
+
+            </div>
+          ))
+        )}
+      </section>
+
       {/* AFFILIATE */}
       {user && (
         <section className="bg-purple-100 p-4 rounded-xl">
@@ -221,6 +238,7 @@ export default function ProductDetail() {
           )}
         </section>
       )}
+
     </div>
   );
 }
